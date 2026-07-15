@@ -1,0 +1,9 @@
+[submodule "external_dependencies/robomme_benchmark"]
+	path = external_dependencies/robomme_benchmark
+	url = https://github.com/RoboMME/robomme_benchmark.git
+[submodule "official_baselines/robomme_policy_learning"]
+	path = official_baselines/robomme_policy_learning
+	url = https://github.com/RoboMME/robomme_policy_learning.git
+[submodule "external_dependencies/Isaac-GR00T"]
+	path = external_dependencies/Isaac-GR00T
+	url = https://github.com/NVIDIA/Isaac-GR00T.git
