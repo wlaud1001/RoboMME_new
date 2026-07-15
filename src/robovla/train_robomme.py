@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -30,6 +31,8 @@ from robovla.robomme_lerobot import (  # noqa: E402
     install_robomme_dataset_adapter,
     prepare_robomme_lerobot_dataset,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def load_modality_config(modality_config_path: str | Path) -> None:
@@ -116,6 +119,84 @@ def build_gr00t_finetune_config(ft_config: FinetuneConfig):
     return config
 
 
+def _parse_lora_target_modules(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def install_lora_model_adapter() -> None:
+    from peft import LoraConfig, get_peft_model
+    from gr00t.model.gr00t_n1d7.setup import Gr00tN1d7Pipeline
+
+    original_create_model = Gr00tN1d7Pipeline._create_model
+    if getattr(original_create_model, "_robovla_lora_wrapped", False):
+        return
+
+    def create_model_with_lora(self):
+        model = original_create_model(self)
+        lora_config = LoraConfig(
+            r=int(os.environ.get("ROBOVLA_LORA_R", "16")),
+            lora_alpha=int(os.environ.get("ROBOVLA_LORA_ALPHA", "32")),
+            lora_dropout=float(os.environ.get("ROBOVLA_LORA_DROPOUT", "0.05")),
+            bias="none",
+            target_modules=_parse_lora_target_modules(
+                os.environ.get(
+                    "ROBOVLA_LORA_TARGET_MODULES",
+                    "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+                )
+            ),
+        )
+        model.backbone.model = get_peft_model(model.backbone.model, lora_config)
+        # Keep the language backbone in train mode so LoRA dropout/adapter layers train normally.
+        # Base backbone weights remain frozen because PEFT only marks adapter weights trainable.
+        model.backbone.tune_llm = True
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        LOGGER.info(
+            "Applied LoRA to GR00T backbone. Trainable parameters: %s / %s (%.2f%%)",
+            f"{trainable_params:,}",
+            f"{total_params:,}",
+            100 * trainable_params / total_params,
+        )
+        return model
+
+    create_model_with_lora._robovla_lora_wrapped = True
+    Gr00tN1d7Pipeline._create_model = create_model_with_lora
+
+
+def configure_train_mode(ft_config: FinetuneConfig) -> str:
+    mode = os.environ.get("ROBOVLA_TRAIN_MODE", "action_head").strip().lower()
+    valid_modes = {"action_head", "lora", "full"}
+    if mode not in valid_modes:
+        raise ValueError(f"ROBOVLA_TRAIN_MODE must be one of {sorted(valid_modes)}, got {mode!r}")
+
+    if mode == "action_head":
+        ft_config.tune_llm = False
+        ft_config.tune_visual = False
+        ft_config.tune_projector = True
+        ft_config.tune_diffusion_model = True
+    elif mode == "lora":
+        ft_config.tune_llm = False
+        ft_config.tune_visual = False
+        ft_config.tune_projector = True
+        ft_config.tune_diffusion_model = True
+        install_lora_model_adapter()
+    elif mode == "full":
+        ft_config.tune_llm = True
+        ft_config.tune_visual = True
+        ft_config.tune_projector = True
+        ft_config.tune_diffusion_model = True
+
+    print(
+        "Using ROBOVLA_TRAIN_MODE="
+        f"{mode} "
+        f"(tune_llm={ft_config.tune_llm}, "
+        f"tune_visual={ft_config.tune_visual}, "
+        f"tune_projector={ft_config.tune_projector}, "
+        f"tune_diffusion_model={ft_config.tune_diffusion_model})"
+    )
+    return mode
+
+
 def main(ft_config: FinetuneConfig) -> None:
     if "LOGURU_LEVEL" not in os.environ:
         os.environ["LOGURU_LEVEL"] = "INFO"
@@ -125,6 +206,8 @@ def main(ft_config: FinetuneConfig) -> None:
     ft_config.embodiment_tag = EmbodimentTag.resolve(ft_config.embodiment_tag)
     if ft_config.modality_config_path is None:
         ft_config.modality_config_path = str(DEFAULT_MODALITY_CONFIG_PATH)
+
+    configure_train_mode(ft_config)
 
     for dataset_path in [path for path in ft_config.dataset_path.split(os.pathsep) if path]:
         dataset_info = prepare_robomme_lerobot_dataset(dataset_path)
