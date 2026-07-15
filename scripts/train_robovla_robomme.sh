@@ -14,6 +14,7 @@ fi
 export CUDA_INC_DIR="$CUDA_HOME/include"
 export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+export UV_PROJECT_ENVIRONMENT="$REPO_ROOT/.venv-train"
 
 resolve_hf_dataset_snapshot() {
   uv run python - <<'PY'

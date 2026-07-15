@@ -11,6 +11,7 @@ unchanged. Local RoboMME-specific training glue lives under `src/robovla`.
   `/data1/wlaud1001/huggingface/hub/datasets--Yinpei--robomme_data_lerobot/snapshots/1510653cccb4d9e5165fb3141c06d88053decc20`
 - GPUs: use only GPU `0,1`
 - HF cache: `HF_HOME=/data1/wlaud1001/huggingface`
+- Training venv: `.venv-train` at this repo root
 
 ## Local Wrapper Files
 
@@ -28,6 +29,18 @@ unchanged. Local RoboMME-specific training glue lives under `src/robovla`.
   - Loads the modality config.
   - Installs the RoboMME dataset adapter without modifying GR00T.
   - Calls the normal GR00T finetune pipeline.
+
+## Training Virtualenv
+
+Training scripts set:
+
+```bash
+export UV_PROJECT_ENVIRONMENT="$REPO_ROOT/.venv-train"
+```
+
+So `uv run ...` uses this repo's `.venv-train` instead of
+`external_dependencies/Isaac-GR00T/.venv`. This keeps upstream GR00T checkout
+clean and separates training dependencies from eval/policy environments.
 
 ## Quick Smoke Test
 
@@ -171,19 +184,23 @@ Or use the full-FT-only wrapper:
 Common defaults are defined near the top of the script in this form:
 
 ```bash
-ROBOVLA_GLOBAL_BATCH_SIZE="${ROBOVLA_GLOBAL_BATCH_SIZE:-2}"
-ROBOVLA_MAX_STEPS="${ROBOVLA_MAX_STEPS:-10000}"
-ROBOVLA_OUTPUT_DIR="${ROBOVLA_OUTPUT_DIR:-$REPO_ROOT/runs/robovla/robomme_gr00t_full_ft}"
+HF_HOME="/data1/wlaud1001/huggingface"
+ROBOVLA_GLOBAL_BATCH_SIZE=2
+ROBOVLA_GRADIENT_ACCUMULATION_STEPS=1
+ROBOVLA_LEARNING_RATE=0.00001
+ROBOVLA_WEIGHT_DECAY=0.0001
+ROBOVLA_WARMUP_RATIO=0.05
+ROBOVLA_MAX_STEPS=10000
+ROBOVLA_OUTPUT_DIR="$REPO_ROOT/runs/robovla/robomme_gr00t_full_ft"
 ```
 
-So you can either edit the default values in the script or override them when
-running:
+Edit those values directly in the script when changing a full-FT run.
+You can still pass normal GR00T flags at the end:
 
 ```bash
-ROBOVLA_GLOBAL_BATCH_SIZE=1 \
-ROBOVLA_MAX_STEPS=1000 \
-ROBOVLA_OUTPUT_DIR=runs/robovla/robomme_gr00t_fullft_1k \
-./scripts/train_robovla_robomme_full_ft.sh
+./scripts/train_robovla_robomme_full_ft.sh \
+  --max-steps 1000 \
+  --output-dir runs/robovla/robomme_gr00t_fullft_1k
 ```
 
 LoRA hyperparameters are environment variables:

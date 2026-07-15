@@ -34,6 +34,7 @@ fi
 export CUDA_INC_DIR="$CUDA_HOME/include"
 export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+export UV_PROJECT_ENVIRONMENT="$REPO_ROOT/.venv-train"
 
 cd "$GR00T_ROOT"
 ROBOMME_SOURCE_DATASET="${ROBOMME_SOURCE_DATASET:-$(resolve_hf_dataset_snapshot)}"

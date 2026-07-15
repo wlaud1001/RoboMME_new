@@ -7,8 +7,53 @@ Use it when you want to:
 - evaluate a released MME-VLA checkpoint on RoboMME
 - run a quick smoke evaluation before a full benchmark run
 - use a checkpoint stored under `HF_HOME` instead of copying it into `runs/ckpts`
+- implement GR00T eval without mixing up relative and absolute joint actions
 
 This guide assumes you already followed [SETUP.md](./SETUP.md).
+
+## GR00T Eval: Do Not Mix Delta And Absolute Joints
+
+Current RoboMME GR00T training config uses:
+
+```text
+state.joint_position = absolute 7D joint state
+action.joint_position = relative joint delta during training
+action.gripper = absolute 1D gripper action
+```
+
+This is easy to misuse during eval. The rule is:
+
+```text
+RoboMME env expects absolute joint_angle actions: 7 joint angles + 1 gripper.
+Do not pass raw GR00T model action_pred to RoboMME.
+Do not manually add current_joint_state if using Gr00tPolicy.get_action().
+```
+
+Use GR00T's policy API for inference:
+
+```python
+gr00t_action, _ = gr00t_policy.get_action(gr00t_observation)
+```
+
+`Gr00tPolicy.get_action()` already calls the saved processor and decodes:
+
+```text
+normalized model output
+-> unnormalized action
+-> relative joint delta converted back to absolute joint position
+```
+
+So the RoboMME action conversion should only concatenate decoded outputs:
+
+```python
+joint = gr00t_action["joint_position"]  # already absolute, shape (B, T, 7)
+gripper = gr00t_action["gripper"]       # absolute, shape (B, T, 1)
+robomme_actions = np.concatenate([joint[0], gripper[0]], axis=-1)
+```
+
+Only add `current_joint_state` yourself if you deliberately bypass
+`Gr00tPolicy.get_action()` and are holding a raw decoded delta. That should not
+be the default eval path.
 
 ## 1. Required Environments
 
