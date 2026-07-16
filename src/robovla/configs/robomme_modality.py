@@ -23,7 +23,7 @@ robomme_config = {
         modality_keys=["joint_position", "gripper"],
         action_configs=[
             ActionConfig(
-                rep=ActionRepresentation.RELATIVE,
+                rep=ActionRepresentation.ABSOLUTE,
                 type=ActionType.NON_EEF,
                 format=ActionFormat.DEFAULT,
                 state_key="joint_position",

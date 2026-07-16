@@ -51,6 +51,7 @@ pip-wheel-metadata/
 wandb/
 outputs/
 runs/
+runs_b200/
 logs/
 out/
 recordings/

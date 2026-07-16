@@ -55,6 +55,33 @@ Only add `current_joint_state` yourself if you deliberately bypass
 `Gr00tPolicy.get_action()` and are holding a raw decoded delta. That should not
 be the default eval path.
 
+Local GR00T wrapper:
+
+```text
+src/robovla/robomme_gr00t_eval.py
+```
+
+One-episode smoke eval:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+HF_HOME=/data1/wlaud1001/huggingface \
+MUJOCO_GL=egl \
+.venv-train/bin/python scripts/eval_robovla_gr00t_one_episode.py \
+  --model-path runs_b200/robovla/robomme_gr00t_full_ft/checkpoint-10000 \
+  --task BinFill \
+  --episode-id 0 \
+  --max-steps 1 \
+  --device cuda:0
+```
+
+Expected smoke output includes:
+
+```text
+action_chunk_shape=(16, 8)
+reached max_steps=1 outcome=ongoing
+```
+
 ## 1. Required Environments
 
 Evaluation uses two separate environments:

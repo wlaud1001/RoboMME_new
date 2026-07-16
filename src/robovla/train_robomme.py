@@ -89,7 +89,7 @@ def build_gr00t_finetune_config(ft_config: FinetuneConfig):
     config.model.reproject_vision = False
     config.model.model_name = "nvidia/Cosmos-Reason2-2B"
     config.model.backbone_trainable_params_fp32 = True
-    config.model.use_relative_action = True
+    config.model.use_relative_action = False
 
     config.training.experiment_name = ft_config.experiment_name
     config.training.start_from_checkpoint = ft_config.base_model_path
