@@ -9,7 +9,7 @@ separate from generated experiment outputs.
 Use this cache root:
 
 ```bash
-export HF_HOME=/data1/wlaud1001/huggingface
+export HF_HOME=/path/to/huggingface
 ```
 
 Recommended layout:
@@ -17,6 +17,9 @@ Recommended layout:
 ```bash
 $HF_HOME/hub/                         # Hugging Face-managed cache
 $HF_HOME/datasets/robomme_data_h5/    # raw RoboMME H5 files for dataset builds
+$HF_HOME/downloads/vlm_subgoal_predictor/
+                                      # downloaded official adapter zip files
+$HF_HOME/models/robomme/              # extracted RoboMME model/adapters
 outputs/                              # generated datasets and experiment artifacts
 runs/                                 # training outputs
 ```
@@ -24,15 +27,64 @@ runs/                                 # training outputs
 The memory subgoal dataset builder reads raw `.h5` files directly, so it uses:
 
 ```bash
-/data1/wlaud1001/huggingface/datasets/robomme_data_h5
+$HF_HOME/datasets/robomme_data_h5
 ```
 
 Do not put generated datasets inside `$HF_HOME/hub`; that directory is managed
 by Hugging Face tooling.
 
+## Prepare Official Assets
+
+Use `scripts/prepare_robomme_qwenvl_assets.sh` to place both the raw H5 dataset
+and the official QwenVL grounded subgoal adapter under `$HF_HOME`.
+
+```bash
+export HF_HOME=/path/to/huggingface
+
+./scripts/prepare_robomme_qwenvl_assets.sh
+```
+
+Default prepared paths:
+
+```bash
+$HF_HOME/datasets/robomme_data_h5/
+$HF_HOME/downloads/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200.zip
+$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200/
+```
+
+The zip file is downloaded to `$HF_HOME/downloads/vlm_subgoal_predictor`.
+Because the archive contains a top-level `checkpoint-1200/` directory, it is
+extracted into:
+
+```bash
+$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounded_subgoal/
+```
+
+So the final adapter path used by training is:
+
+```bash
+$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200
+```
+
+Useful variants:
+
+```bash
+./scripts/prepare_robomme_qwenvl_assets.sh --skip-raw-data
+./scripts/prepare_robomme_qwenvl_assets.sh --skip-model
+./scripts/prepare_robomme_qwenvl_assets.sh --force-unzip
+```
+
+Override paths with environment variables if the storage layout changes:
+
+```bash
+ROBOMME_RAW_DATA_DIR=/path/to/robomme_data_h5 \
+ROBOMME_MODEL_ROOT=/path/to/models/robomme \
+./scripts/prepare_robomme_qwenvl_assets.sh
+```
+
 ## QwenVL Subgoal Memory Dataset
 
-The script [scripts/build_robomme_qwenvl_memory_dataset.py](/data3/wlaud1001/workspace/Robotics/RoboMME_new/scripts/build_robomme_qwenvl_memory_dataset.py:1)
+The script `scripts/build_robomme_qwenvl_memory_dataset.py`
 builds a separate QwenVL subgoal dataset with sparse visual memory. The official
 RoboMME QwenVL builder is left unchanged.
 
@@ -135,17 +187,21 @@ The desired behavior is the second case.
 Full build:
 
 ```bash
-HF_HOME=/data1/wlaud1001/huggingface \
-/home/wlaud1001/miniconda3/envs/3D/bin/python scripts/build_robomme_qwenvl_memory_dataset.py \
-  --raw-data-path /data1/wlaud1001/huggingface/datasets/robomme_data_h5 \
+export HF_HOME=/path/to/huggingface
+PYTHON_BIN=/path/to/python
+
+$PYTHON_BIN scripts/build_robomme_qwenvl_memory_dataset.py \
+  --raw-data-path "$HF_HOME/datasets/robomme_data_h5" \
   --preprocessed-data-path outputs/robomme_qwenvl_memory_h16_k16
 ```
 
 Optional smoke build for one task:
 
 ```bash
-/home/wlaud1001/miniconda3/envs/3D/bin/python scripts/build_robomme_qwenvl_memory_dataset.py \
-  --raw-data-path /data1/wlaud1001/huggingface/datasets/robomme_data_h5 \
+PYTHON_BIN=/path/to/python
+
+$PYTHON_BIN scripts/build_robomme_qwenvl_memory_dataset.py \
+  --raw-data-path "$HF_HOME/datasets/robomme_data_h5" \
   --preprocessed-data-path outputs/_smoke/robomme_qwenvl_memory_h16_k16 \
   --env-filter PickHighlight \
   --max-episodes 1
@@ -168,7 +224,7 @@ Useful flags:
 The full dataset was built successfully at:
 
 ```bash
-/data3/wlaud1001/workspace/Robotics/RoboMME_new/outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16
+outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16
 ```
 
 Build summary:
@@ -193,13 +249,67 @@ Validation checks passed:
   observation.
 - Past observation timesteps are spaced by `H=16`.
 
-## Raw Data Download
+## Train Subgoal Predictor
+
+Use `scripts/train_qwenvl_subgoal_memory.sh`
+to fine-tune the grounded QwenVL subgoal predictor on this memory dataset.
+
+```bash
+HF_HOME=/path/to/huggingface \
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+./scripts/train_qwenvl_subgoal_memory.sh
+```
+
+Important variables are defined near the top of the script and can be overridden
+from the shell:
+
+```bash
+QWENVL_PER_DEVICE_BATCH_SIZE=2 \
+QWENVL_GRADIENT_ACCUMULATION_STEPS=8 \
+QWENVL_MAX_STEPS=1000 \
+QWENVL_SAVE_STEPS=100 \
+QWENVL_OUTPUT_DIR=runs/qwenvl_subgoal_memory_h16_k16/grounded_1k \
+./scripts/train_qwenvl_subgoal_memory.sh
+```
+
+By default, this continues from the official RoboMME grounded QwenVL subgoal
+predictor adapter:
+
+```bash
+QWENVL_INIT_ADAPTER=$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200
+```
+
+If this adapter path does not exist, the training script automatically calls
+`scripts/prepare_robomme_qwenvl_assets.sh --skip-raw-data` and extracts the
+official adapter under `$HF_HOME/models/robomme`. Set
+`QWENVL_AUTO_PREPARE_ADAPTER=false` to disable that behavior.
+
+Set `QWENVL_INIT_ADAPTER=""` to train from the base `Qwen/Qwen3-VL-4B-Instruct`
+model instead.
+
+The script sets the visual token budget for this dataset:
+
+```bash
+IMAGE_MAX_TOKEN_NUM=64
+VIDEO_MAX_TOKEN_NUM=16
+FPS_MAX_FRAMES=10
+```
+
+This keeps current observations at `256x256` token resolution while allowing
+past observations and demo video frames saved at `128x128` to use fewer tokens.
+Run it from an environment where `swift` is installed, or set:
+
+```bash
+SWIFT_BIN=/path/to/swift
+```
+
+## Manual Raw Data Download
 
 If the raw H5 directory is missing, download the dataset into a direct local
 directory rather than into `$HF_HOME/hub`:
 
 ```bash
-export HF_HOME=/data1/wlaud1001/huggingface
+export HF_HOME=/path/to/huggingface
 
 huggingface-cli download Yinpei/robomme_data_h5 \
   --repo-type dataset \

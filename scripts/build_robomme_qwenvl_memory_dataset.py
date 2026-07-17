@@ -359,12 +359,13 @@ class MemoryQwenVLDatasetBuilder(QwenVLDatasetBuilder):
 
 
 def _parse_args() -> argparse.Namespace:
+    hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
     parser = argparse.ArgumentParser(
         description="Build QwenVL subgoal JSONL with sparse past-observation memory."
     )
     parser.add_argument(
         "--raw-data-path",
-        default="/data1/wlaud1001/huggingface/datasets/robomme_data_h5",
+        default=os.path.join(hf_home, "datasets", "robomme_data_h5"),
         help="Directory containing RoboMME HDF5 files.",
     )
     parser.add_argument(
