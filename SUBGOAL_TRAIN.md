@@ -1,10 +1,75 @@
-# Datasets
+# Subgoal Predictor Training
 
 This repo uses separate dataset paths for raw RoboMME data, generated QwenVL
 subgoal data, and GR00T/LeRobot training data. Keep Hugging Face cache files
 separate from generated experiment outputs.
 
-## Paths
+## Command Flow
+
+아래 순서대로 실행하면 됩니다. 경로는 모두 `$HF_HOME` 기준입니다.
+
+```bash
+# 0. Set paths.
+cd /path/to/RoboMME_new
+export HF_HOME=/path/to/huggingface
+export PYTHON_BIN=/path/to/python
+```
+
+```bash
+# 1. Download raw RoboMME H5 dataset, decompress .h5.tar.xz to .h5,
+#    download official QwenVL grounded subgoal adapter zip, and unzip it.
+./scripts/prepare_robomme_qwenvl_assets.sh
+```
+
+```bash
+# 2. Smoke-build one task first.
+$PYTHON_BIN scripts/build_robomme_qwenvl_memory_dataset.py \
+  --raw-data-path "$HF_HOME/datasets/robomme_data_h5" \
+  --preprocessed-data-path outputs/_smoke/robomme_qwenvl_memory_h16_k16 \
+  --env-filter PickHighlight \
+  --max-episodes 1
+```
+
+```bash
+# 3. Build the full sparse-memory QwenVL subgoal dataset.
+$PYTHON_BIN scripts/build_robomme_qwenvl_memory_dataset.py \
+  --raw-data-path "$HF_HOME/datasets/robomme_data_h5" \
+  --preprocessed-data-path outputs/robomme_qwenvl_memory_h16_k16
+```
+
+```bash
+# 4. Train the grounded subgoal predictor.
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+./scripts/train_qwenvl_subgoal_memory.sh
+```
+
+For a short training smoke run:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+QWENVL_PER_DEVICE_BATCH_SIZE=1 \
+QWENVL_GRADIENT_ACCUMULATION_STEPS=1 \
+QWENVL_MAX_STEPS=5 \
+QWENVL_SAVE_STEPS=5 \
+QWENVL_OUTPUT_DIR=runs/_smoke/qwenvl_subgoal_memory \
+./scripts/train_qwenvl_subgoal_memory.sh
+```
+
+For a configurable full run:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+QWENVL_PER_DEVICE_BATCH_SIZE=2 \
+QWENVL_GRADIENT_ACCUMULATION_STEPS=8 \
+QWENVL_MAX_STEPS=1000 \
+QWENVL_SAVE_STEPS=100 \
+QWENVL_OUTPUT_DIR=runs/qwenvl_subgoal_memory_h16_k16/grounded_1k \
+./scripts/train_qwenvl_subgoal_memory.sh
+```
+
+## Dataset Prepare Section
+
+### Paths
 
 Use this cache root:
 
@@ -33,7 +98,7 @@ $HF_HOME/datasets/robomme_data_h5
 Do not put generated datasets inside `$HF_HOME/hub`; that directory is managed
 by Hugging Face tooling.
 
-## Prepare Official Assets
+### Prepare Official Assets
 
 Use `scripts/prepare_robomme_qwenvl_assets.sh` to place both the raw H5 dataset
 and the official QwenVL grounded subgoal adapter under `$HF_HOME`.
@@ -48,9 +113,23 @@ Default prepared paths:
 
 ```bash
 $HF_HOME/datasets/robomme_data_h5/
+$HF_HOME/datasets/robomme_data_h5/tarxz_h5.py
 $HF_HOME/downloads/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200.zip
 $HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200/
 ```
+
+The raw dataset repository may contain per-file `.h5.tar.xz` archives. The
+prepare script automatically runs:
+
+```bash
+python "$HF_HOME/datasets/robomme_data_h5/tarxz_h5.py" decompress \
+  --input_dir "$HF_HOME/datasets/robomme_data_h5" \
+  --jobs 16
+```
+
+If no `.h5.tar.xz` archives are present, this step is skipped. Set
+`ROBOMME_DECOMPRESS_RAW_DATA=false` to disable raw data decompression, or set
+`ROBOMME_REMOVE_RAW_ARCHIVE=true` to remove archives after successful extraction.
 
 The zip file is downloaded to `$HF_HOME/downloads/vlm_subgoal_predictor`.
 Because the archive contains a top-level `checkpoint-1200/` directory, it is
@@ -79,6 +158,7 @@ Override paths with environment variables if the storage layout changes:
 ```bash
 ROBOMME_RAW_DATA_DIR=/path/to/robomme_data_h5 \
 ROBOMME_MODEL_ROOT=/path/to/models/robomme \
+ROBOMME_DECOMPRESS_JOBS=32 \
 ./scripts/prepare_robomme_qwenvl_assets.sh
 ```
 
@@ -316,6 +396,14 @@ huggingface-cli download Yinpei/robomme_data_h5 \
   --local-dir $HF_HOME/datasets/robomme_data_h5
 ```
 
+If the dataset contains `.h5.tar.xz` archives, decompress them before building:
+
+```bash
+python "$HF_HOME/datasets/robomme_data_h5/tarxz_h5.py" decompress \
+  --input_dir "$HF_HOME/datasets/robomme_data_h5" \
+  --jobs 16
+```
+
 Then pass:
 
 ```bash
@@ -325,3 +413,48 @@ Then pass:
 Using the Hugging Face hub snapshot path also works if it directly contains the
 `.h5` files, but the direct `$HF_HOME/datasets/robomme_data_h5` path is simpler
 for scripts that scan files with `os.listdir`.
+
+## Final Training Command
+
+After preparing assets and building the dataset, train with:
+
+```bash
+cd /path/to/RoboMME_new
+export HF_HOME=/path/to/huggingface
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+QWENVL_PER_DEVICE_BATCH_SIZE=2 \
+QWENVL_GRADIENT_ACCUMULATION_STEPS=8 \
+QWENVL_MAX_STEPS=1000 \
+QWENVL_SAVE_STEPS=100 \
+QWENVL_OUTPUT_DIR=runs/qwenvl_subgoal_memory_h16_k16/grounded_1k \
+./scripts/train_qwenvl_subgoal_memory.sh
+```
+
+The script defaults to:
+
+```bash
+QWENVL_DATASET_PATH=outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl
+QWENVL_INIT_ADAPTER=$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200
+```
+
+## Notes
+
+- Set `HF_HOME` before running prepare, build, or train. Dataset/model paths are
+  derived from `$HF_HOME`; do not hard-code machine-specific paths.
+- The build step needs extracted `.h5` files, not only `.h5.tar.xz` archives.
+  `scripts/prepare_robomme_qwenvl_assets.sh` handles this automatically.
+- The model zip is stored under `$HF_HOME/downloads/...`; the extracted adapter
+  used by training is under `$HF_HOME/models/robomme/.../checkpoint-1200`.
+- Do not store generated datasets in `$HF_HOME/hub`; use `outputs/` for builds
+  and `runs/` for training outputs.
+- Run the smoke dataset build before the full build when changing paths or
+  environment variables.
+- Run the short training smoke command before a long run when using a new GPU
+  setup or batch size.
+- If `swift` is not on `PATH`, activate the ms-swift environment or set
+  `SWIFT_BIN=/path/to/swift`.
+- GPU selection should be done with `CUDA_VISIBLE_DEVICES`; do not hard-code GPU
+  indices inside scripts.
+- If the official adapter is missing, the training script will try to prepare it
+  automatically. Set `QWENVL_AUTO_PREPARE_ADAPTER=false` to disable that.

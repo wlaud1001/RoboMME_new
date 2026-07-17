@@ -4,11 +4,16 @@ set -euo pipefail
 # Prepare raw RoboMME H5 data and the official QwenVL grounded subgoal adapter
 # under HF_HOME-managed, repo-independent paths.
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 HF_CLI="${HF_CLI:-huggingface-cli}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 
 ROBOMME_RAW_DATA_REPO="${ROBOMME_RAW_DATA_REPO:-Yinpei/robomme_data_h5}"
 ROBOMME_RAW_DATA_DIR="${ROBOMME_RAW_DATA_DIR:-$HF_HOME/datasets/robomme_data_h5}"
+ROBOMME_DECOMPRESS_RAW_DATA="${ROBOMME_DECOMPRESS_RAW_DATA:-true}"
+ROBOMME_DECOMPRESS_JOBS="${ROBOMME_DECOMPRESS_JOBS:-16}"
+ROBOMME_REMOVE_RAW_ARCHIVE="${ROBOMME_REMOVE_RAW_ARCHIVE:-false}"
 
 ROBOMME_SUBGOAL_MODEL_REPO="${ROBOMME_SUBGOAL_MODEL_REPO:-Yinpei/vlm_subgoal_predictor}"
 ROBOMME_SUBGOAL_ARCHIVE_SUBPATH="${ROBOMME_SUBGOAL_ARCHIVE_SUBPATH:-qwenvl/grounded_subgoal/checkpoint-1200.zip}"
@@ -41,8 +46,12 @@ Usage: $0 [--skip-raw-data] [--skip-model] [--force-unzip]
 
 Environment variables:
   HF_HOME                         Default: $HOME/.cache/huggingface
+  PYTHON_BIN                      Default: python
   ROBOMME_RAW_DATA_REPO           Default: Yinpei/robomme_data_h5
   ROBOMME_RAW_DATA_DIR            Default: \$HF_HOME/datasets/robomme_data_h5
+  ROBOMME_DECOMPRESS_RAW_DATA     Default: true
+  ROBOMME_DECOMPRESS_JOBS         Default: 16
+  ROBOMME_REMOVE_RAW_ARCHIVE      Default: false
   ROBOMME_SUBGOAL_MODEL_REPO      Default: Yinpei/vlm_subgoal_predictor
   ROBOMME_MODEL_ARCHIVE_DIR       Default: \$HF_HOME/downloads/vlm_subgoal_predictor
   ROBOMME_MODEL_ROOT              Default: \$HF_HOME/models/robomme
@@ -77,6 +86,39 @@ if [[ "$SKIP_RAW_DATA" -eq 0 ]]; then
   "$HF_CLI" download "$ROBOMME_RAW_DATA_REPO" \
     --repo-type dataset \
     --local-dir "$ROBOMME_RAW_DATA_DIR"
+
+  if [[ "$ROBOMME_DECOMPRESS_RAW_DATA" == "true" ]]; then
+    archive_sample="$(
+      find "$ROBOMME_RAW_DATA_DIR" -type f \
+        \( -name '*.h5.tar.xz' -o -name '*.hdf5.tar.xz' \) \
+        -print -quit
+    )"
+
+    if [[ -n "$archive_sample" ]]; then
+      tarxz_script="$ROBOMME_RAW_DATA_DIR/tarxz_h5.py"
+      if [[ ! -f "$tarxz_script" ]]; then
+        tarxz_script="$REPO_ROOT/official_baselines/robomme_policy_learning/scripts/tarxz_h5.py"
+      fi
+      if [[ ! -f "$tarxz_script" ]]; then
+        echo "tarxz_h5.py not found. Cannot decompress raw H5 archives." >&2
+        exit 1
+      fi
+
+      decompress_cmd=(
+        "$PYTHON_BIN" "$tarxz_script" decompress
+        --input_dir "$ROBOMME_RAW_DATA_DIR"
+        --jobs "$ROBOMME_DECOMPRESS_JOBS"
+      )
+      if [[ "$ROBOMME_REMOVE_RAW_ARCHIVE" == "true" ]]; then
+        decompress_cmd+=(--remove_archive)
+      fi
+
+      echo "Decompressing raw H5 archives under: $ROBOMME_RAW_DATA_DIR"
+      "${decompress_cmd[@]}"
+    else
+      echo "No .h5.tar.xz archives found under: $ROBOMME_RAW_DATA_DIR"
+    fi
+  fi
 fi
 
 if [[ "$SKIP_MODEL" -eq 0 ]]; then
