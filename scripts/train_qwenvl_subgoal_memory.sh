@@ -6,7 +6,7 @@ POLICY_REPO="$REPO_ROOT/official_baselines/robomme_policy_learning"
 
 # Paths
 HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
-QWENVL_DATASET_PATH="${QWENVL_DATASET_PATH:-$REPO_ROOT/outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl}"
+QWENVL_DATASET_PATH="${QWENVL_DATASET_PATH:-$REPO_ROOT/outputs/robomme_qwenvl_memory_h16_k16_swift/grounded_subgoal_train.jsonl}"
 QWENVL_OUTPUT_DIR="${QWENVL_OUTPUT_DIR:-$REPO_ROOT/runs/qwenvl_subgoal_memory_h16_k16/grounded_subgoal}"
 SWIFT_BIN="${SWIFT_BIN:-swift}"
 
@@ -28,6 +28,7 @@ FPS_MAX_FRAMES="${FPS_MAX_FRAMES:-10}"
 
 # Training knobs
 QWENVL_MODEL="${QWENVL_MODEL:-Qwen/Qwen3-VL-4B-Instruct}"
+QWENVL_USE_HF="${QWENVL_USE_HF:-true}"
 QWENVL_TRAIN_TYPE="${QWENVL_TRAIN_TYPE:-lora}"
 QWENVL_TORCH_DTYPE="${QWENVL_TORCH_DTYPE:-bfloat16}"
 QWENVL_NUM_TRAIN_EPOCHS="${QWENVL_NUM_TRAIN_EPOCHS:-2}"
@@ -58,7 +59,30 @@ export IMAGE_MAX_TOKEN_NUM
 export VIDEO_MAX_TOKEN_NUM
 export FPS_MAX_FRAMES
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-$PYTORCH_CUDA_ALLOC_CONF}"
 export MASTER_PORT
+
+if [[ -z "${CUDA_HOME:-}" || ! -x "$CUDA_HOME/bin/nvcc" ]]; then
+  if command -v nvcc >/dev/null 2>&1; then
+    CUDA_HOME="$(cd "$(dirname "$(command -v nvcc)")/.." && pwd)"
+    export CUDA_HOME
+  else
+    shopt -s nullglob
+    _cuda_nvcc_candidates=(/usr/local/cuda*/bin/nvcc)
+    shopt -u nullglob
+    if [[ "${#_cuda_nvcc_candidates[@]}" -gt 0 ]]; then
+      IFS=$'\n' _cuda_nvcc_candidates=($(printf '%s\n' "${_cuda_nvcc_candidates[@]}" | sort -V))
+      _cuda_nvcc_last=$((${#_cuda_nvcc_candidates[@]} - 1))
+      CUDA_HOME="$(cd "$(dirname "${_cuda_nvcc_candidates[$_cuda_nvcc_last]}")/.." && pwd)"
+      export CUDA_HOME
+      export PATH="$CUDA_HOME/bin:$PATH"
+    fi
+    unset _cuda_nvcc_candidates _cuda_nvcc_last
+  fi
+fi
+if [[ -n "${CUDA_HOME:-}" ]]; then
+  export CUDA_PATH="${CUDA_PATH:-$CUDA_HOME}"
+fi
 
 if [[ -z "$QWENVL_NPROC_PER_NODE" ]]; then
   if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
@@ -75,6 +99,7 @@ if [[ ! -f "$QWENVL_DATASET_PATH" ]]; then
   echo "Dataset JSONL not found: $QWENVL_DATASET_PATH" >&2
   exit 1
 fi
+QWENVL_DATASET_PATH="$(realpath "$QWENVL_DATASET_PATH")"
 
 if [[ -n "$QWENVL_INIT_ADAPTER" && ! -d "$QWENVL_INIT_ADAPTER" ]]; then
   if [[ "$QWENVL_AUTO_PREPARE_ADAPTER" == "true" && -x "$REPO_ROOT/scripts/prepare_robomme_qwenvl_assets.sh" ]]; then
@@ -91,6 +116,7 @@ if [[ -n "$QWENVL_INIT_ADAPTER" && ! -d "$QWENVL_INIT_ADAPTER" ]]; then
     echo "Run scripts/prepare_robomme_qwenvl_assets.sh, or set QWENVL_INIT_ADAPTER to an existing adapter path." >&2
     exit 1
   fi
+  QWENVL_INIT_ADAPTER="$(realpath "$QWENVL_INIT_ADAPTER")"
 fi
 
 if ! command -v "$SWIFT_BIN" >/dev/null 2>&1; then
@@ -100,10 +126,12 @@ if ! command -v "$SWIFT_BIN" >/dev/null 2>&1; then
 fi
 
 mkdir -p "$QWENVL_OUTPUT_DIR"
+QWENVL_OUTPUT_DIR="$(realpath "$QWENVL_OUTPUT_DIR")"
 
 TRAIN_CMD=(
   "$SWIFT_BIN" sft
   --model "$QWENVL_MODEL"
+  --use_hf "$QWENVL_USE_HF"
   --dataset "$QWENVL_DATASET_PATH"
   --split_dataset_ratio 0.0
   --load_from_cache_file "$QWENVL_LOAD_FROM_CACHE_FILE"
@@ -135,7 +163,7 @@ TRAIN_CMD=(
 )
 
 if [[ -n "$QWENVL_INIT_ADAPTER" ]]; then
-  TRAIN_CMD+=(--adapter "$QWENVL_INIT_ADAPTER")
+  TRAIN_CMD+=(--adapters "$QWENVL_INIT_ADAPTER")
 fi
 
 if [[ -n "$QWENVL_MAX_STEPS" ]]; then

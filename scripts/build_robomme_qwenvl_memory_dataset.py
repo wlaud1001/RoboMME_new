@@ -196,9 +196,8 @@ class MemoryQwenVLDatasetBuilder(QwenVLDatasetBuilder):
                 {"role": "assistant", "content": subgoal},
             ],
             "images": past_image_paths + [current_image_path],
+            "videos": [video_path] if video_path else [],
         }
-        if video_path:
-            result["videos"] = [video_path]
 
         if self.history_simple_subgoals:
             if self.history_simple_subgoals[-1] != subgoal:
@@ -251,9 +250,8 @@ class MemoryQwenVLDatasetBuilder(QwenVLDatasetBuilder):
                 "bbox": self._add_noise_to_bbox(self.history_grounded_bboxes + bbox),
             },
             "images": past_image_paths + [current_image_path],
+            "videos": [video_path] if video_path else [],
         }
-        if video_path:
-            result["videos"] = [video_path]
 
         if self.history_grounded_subgoals:
             if self.history_grounded_subgoals[-1] != assistant_prompt:

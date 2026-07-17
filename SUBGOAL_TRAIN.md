@@ -32,13 +32,24 @@ $PYTHON_BIN scripts/build_robomme_qwenvl_memory_dataset.py \
 
 ```bash
 # 3. Build the full sparse-memory QwenVL subgoal dataset.
+#    This keeps the K=16 version as the base dataset.
 $PYTHON_BIN scripts/build_robomme_qwenvl_memory_dataset.py \
   --raw-data-path "$HF_HOME/datasets/robomme_data_h5" \
   --preprocessed-data-path outputs/robomme_qwenvl_memory_h16_k16
 ```
 
 ```bash
-# 4. Train the grounded subgoal predictor.
+# 4. Optional: materialize a smaller-K JSONL without rebuilding images/videos.
+#    For training, always materialize once even for K=16 so every row has the
+#    same swift/Hugging Face dataset schema.
+$PYTHON_BIN scripts/materialize_qwenvl_memory_k.py \
+  --input-jsonl outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl \
+  --output-jsonl outputs/robomme_qwenvl_memory_h16_k16_swift/grounded_subgoal_train.jsonl \
+  --memory-size 16
+```
+
+```bash
+# 5. Train the grounded subgoal predictor.
 CUDA_VISIBLE_DEVICES=0,1,2,3 \
 ./scripts/train_qwenvl_subgoal_memory.sh
 ```
@@ -275,6 +286,27 @@ $PYTHON_BIN scripts/build_robomme_qwenvl_memory_dataset.py \
   --preprocessed-data-path outputs/robomme_qwenvl_memory_h16_k16
 ```
 
+This creates and keeps the base `H=16, K=16` dataset:
+
+```bash
+outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl
+```
+
+Before training, materialize the Swift-compatible K=16 JSONL:
+
+```bash
+$PYTHON_BIN scripts/materialize_qwenvl_memory_k.py \
+  --input-jsonl outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl \
+  --output-jsonl outputs/robomme_qwenvl_memory_h16_k16_swift/grounded_subgoal_train.jsonl \
+  --memory-size 16
+```
+
+This keeps the original K=16 dataset unchanged and writes the training JSONL to:
+
+```bash
+outputs/robomme_qwenvl_memory_h16_k16_swift/grounded_subgoal_train.jsonl
+```
+
 Optional smoke build for one task:
 
 ```bash
@@ -298,6 +330,76 @@ Useful flags:
 --env-filter PickHighlight InsertPeg VideoUnmask
 --max-episodes 1
 ```
+
+## Materialize K-Specific JSONL
+
+Use `scripts/materialize_qwenvl_memory_k.py` when you want to change `K`
+without rebuilding images, videos, or reading HDF5 files again. This keeps
+`H=16` fixed and selects the last `K` past observations from the base K=16
+JSONL.
+
+Materialization is also used for `K=16` because Hugging Face `datasets` requires
+all JSONL rows to have identical columns. The materialized files always include
+`videos`, using an empty list when a row has no demo video.
+
+If another server already ran the older heavy build, do not rebuild unless the
+media files are missing. Keep the existing base dataset:
+
+```bash
+outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl
+outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/images/
+```
+
+Then run materialization on that server:
+
+```bash
+$PYTHON_BIN scripts/materialize_qwenvl_memory_k.py \
+  --input-jsonl outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl \
+  --output-jsonl outputs/robomme_qwenvl_memory_h16_k16_swift/grounded_subgoal_train.jsonl \
+  --memory-size 16
+```
+
+Heavy rebuild is only needed if the base JSONL or `images/` directory is missing,
+the media paths point to files that do not exist on that server, or you changed
+`H`, max source `K`, resolutions, prompt format, or raw H5 processing.
+
+Example for `K=8`:
+
+```bash
+$PYTHON_BIN scripts/materialize_qwenvl_memory_k.py \
+  --input-jsonl outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl \
+  --output-jsonl outputs/robomme_qwenvl_memory_h16_k8/grounded_subgoal_train.jsonl \
+  --memory-size 8
+```
+
+Example for `K=4`:
+
+```bash
+$PYTHON_BIN scripts/materialize_qwenvl_memory_k.py \
+  --input-jsonl outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl \
+  --output-jsonl outputs/robomme_qwenvl_memory_h16_k4/grounded_subgoal_train.jsonl \
+  --memory-size 4
+```
+
+Then train on the materialized JSONL by overriding `QWENVL_DATASET_PATH`:
+
+```bash
+QWENVL_DATASET_PATH=outputs/robomme_qwenvl_memory_h16_k8/grounded_subgoal_train.jsonl \
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+./scripts/train_qwenvl_subgoal_memory.sh
+```
+
+The original K=16 dataset remains unchanged. This materialization step only
+rewrites JSONL rows:
+
+- `images` becomes `last K past images + current image`.
+- The `Past observations: <image>...` prompt line is updated to match K.
+- `videos` is always present; rows without video use `videos: []`.
+- `images` and `videos` are written as absolute paths so training still works
+  after the script changes into the official policy repo directory.
+- Assistant labels, system prompts, and grounded bbox fields are kept.
+- Early timesteps may have fewer than K past observations because execution has
+  just started.
 
 ## Current Build Result
 
@@ -364,6 +466,10 @@ If this adapter path does not exist, the training script automatically calls
 official adapter under `$HF_HOME/models/robomme`. Set
 `QWENVL_AUTO_PREPARE_ADAPTER=false` to disable that behavior.
 
+The script passes this path to `swift sft` with the full `--adapters` option.
+Do not shorten it to `--adapter`; recent ms-swift versions treat that as an
+ambiguous abbreviation.
+
 Set `QWENVL_INIT_ADAPTER=""` to train from the base `Qwen/Qwen3-VL-4B-Instruct`
 model instead.
 
@@ -377,6 +483,8 @@ FPS_MAX_FRAMES=10
 
 This keeps current observations at `256x256` token resolution while allowing
 past observations and demo video frames saved at `128x128` to use fewer tokens.
+The script also passes `--use_hf true` to `swift sft`, so the base Qwen model is
+resolved through Hugging Face tooling and `$HF_HOME` instead of ModelScope.
 Run it from an environment where `swift` is installed, or set:
 
 ```bash
@@ -434,7 +542,7 @@ QWENVL_OUTPUT_DIR=runs/qwenvl_subgoal_memory_h16_k16/grounded_1k \
 The script defaults to:
 
 ```bash
-QWENVL_DATASET_PATH=outputs/robomme_qwenvl_memory_h16_k16/qwenvl_memory_h16_k16/grounded_subgoal_train.jsonl
+QWENVL_DATASET_PATH=outputs/robomme_qwenvl_memory_h16_k16_swift/grounded_subgoal_train.jsonl
 QWENVL_INIT_ADAPTER=$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200
 ```
 
@@ -450,6 +558,9 @@ QWENVL_INIT_ADAPTER=$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounde
   and `runs/` for training outputs.
 - Run the smoke dataset build before the full build when changing paths or
   environment variables.
+- Run `scripts/materialize_qwenvl_memory_k.py --memory-size 16` before training
+  the default K=16 setup; this normalizes JSONL columns for Hugging Face
+  `datasets`.
 - Run the short training smoke command before a long run when using a new GPU
   setup or batch size.
 - If `swift` is not on `PATH`, activate the ms-swift environment or set
@@ -458,3 +569,7 @@ QWENVL_INIT_ADAPTER=$HF_HOME/models/robomme/vlm_subgoal_predictor/qwenvl/grounde
   indices inside scripts.
 - If the official adapter is missing, the training script will try to prepare it
   automatically. Set `QWENVL_AUTO_PREPARE_ADAPTER=false` to disable that.
+- Use `--adapters` for ms-swift adapter loading. `--adapter` is ambiguous in
+  recent ms-swift CLIs.
+- The training script defaults to `QWENVL_USE_HF=true`, which passes
+  `--use_hf true` to ms-swift and keeps base model resolution under `$HF_HOME`.
